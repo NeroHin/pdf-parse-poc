@@ -172,7 +172,9 @@ const allHighlights = computed<HighlightEntry[]>(() =>
 );
 
 function getHighlights(pageNum: number): HighlightEntry[] {
-  return allHighlights.value.filter((h) => h.page === pageNum);
+  return allHighlights.value.filter(
+    (h) => h.page === pageNum && (h.blockId === props.activeBlockId || h.blockId === props.hoverBlockId)
+  );
 }
 
 function getHighlightStyle(hl: HighlightEntry, pageNum: number) {

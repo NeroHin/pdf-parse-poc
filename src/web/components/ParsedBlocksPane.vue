@@ -24,6 +24,14 @@
             {{ getDetectionLabel(pageNum) }}
           </el-tag>
           <span class="page-block-count">{{ getPageBlocks(pageNum).length }} blocks</span>
+          <el-button
+            size="small"
+            text
+            class="copy-page-button"
+            @click.stop="onCopyPage(pageNum)"
+          >
+            Copy
+          </el-button>
         </div>
 
         <!-- Merged page text: clickable, readable -->
@@ -62,6 +70,7 @@ const emit = defineEmits<{
   blockHover: [block: SourceBlock];
   blockLeave: [];
   pageClick: [pageNum: number];
+  copyPage: [pageNum: number];
 }>();
 
 const scrollbarRef = ref<{ wrapRef: HTMLElement } | null>(null);
@@ -156,6 +165,10 @@ function onPageTextClick(pageNum: number) {
   emit("pageClick", pageNum);
 }
 
+function onCopyPage(pageNum: number) {
+  emit("copyPage", pageNum);
+}
+
 function scrollToBlock(blockId: string) {
   const block = props.blocks.find((b) => b.id === blockId);
   if (!block) return;
@@ -221,6 +234,12 @@ defineExpose({ scrollToBlock });
   margin-left: auto;
   font-size: 11px;
   color: var(--el-text-color-placeholder);
+}
+
+.copy-page-button {
+  padding: 0 4px;
+  min-height: 22px;
+  font-size: 11px;
 }
 
 /* Merged readable text area */

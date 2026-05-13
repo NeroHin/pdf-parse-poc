@@ -34,10 +34,27 @@
       <div class="left-pane">
         <div class="pane-header">
           <span class="pane-title">解析結果</span>
-          <span v-if="state.previewDocument.value" class="pane-meta">
-            {{ state.previewDocument.value.blocks.length }} 個 blocks，
-            {{ state.previewDocument.value.pageCount }} 頁
-          </span>
+          <div v-if="state.previewDocument.value" class="pane-actions">
+            <span class="pane-meta">
+              {{ state.previewDocument.value.blocks.length }} 個 blocks，
+              {{ state.previewDocument.value.pageCount }} 頁
+            </span>
+            <el-button
+              size="small"
+              type="primary"
+              plain
+              @click="onExportAllText"
+            >
+              匯出全部文字
+            </el-button>
+            <el-button
+              size="small"
+              plain
+              @click="onDownloadTextFile"
+            >
+              下載 .txt
+            </el-button>
+          </div>
         </div>
         <ParsedBlocksPane
           ref="parsedBlocksPaneRef"
@@ -48,6 +65,7 @@
           @block-hover="onBlockHover"
           @block-leave="onBlockLeave"
           @page-click="onPageClick"
+          @copy-page="onCopyPage"
         />
       </div>
 
@@ -81,7 +99,7 @@ import ParsedBlocksPane from "../components/ParsedBlocksPane.vue";
 import PdfSourceViewer from "../components/PdfSourceViewer.vue";
 import ParserWarnings from "../components/ParserWarnings.vue";
 import { usePreviewState } from "../state/previewSelection.js";
-import type { PdfParseModeHint, PdfAdvancedOptions, ParserBackend, SourceBlock } from "../../ingestion/types.js";
+import type { PdfParseModeHint, PdfAdvancedOptions, SourceBlock } from "../../ingestion/types.js";
 
 const state = usePreviewState();
 const parsedBlocksPaneRef = ref<InstanceType<typeof ParsedBlocksPane> | null>(null);
@@ -96,7 +114,6 @@ const activeBackendLabel = computed(() => {
   const doc = state.previewDocument.value;
   if (!doc || doc.blocks.length === 0) return null;
   const parsers = new Set(doc.blocks.map((b) => b.parser));
-  if (parsers.has("pdfjs-extract")) return "pdf.js-extract";
   const hasOdl = parsers.has("opendataloader-default");
   const hasRepair = parsers.has("esearch-ocr-repair");
   if (hasOdl && hasRepair) return "OpenDataLoader + eSearch-OCR";
@@ -135,10 +152,75 @@ function formatPages(pages: number[]): string {
   return `${pages[0]}-${pages[pages.length - 1]}`;
 }
 
+function blocksToText(blocks: SourceBlock[]): string {
+  return blocks
+    .slice()
+    .sort((a, b) => a.page - b.page || a.bbox.y - b.bbox.y || a.bbox.x - b.bbox.x)
+    .map((b) => b.text.trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function copyText(text: string, successMessage: string) {
+  if (!text.trim()) {
+    ElMessage.warning("沒有可複製的文字");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    ElMessage.success(successMessage);
+  } catch {
+    ElMessage.error("複製失敗，瀏覽器未允許剪貼簿權限");
+  }
+}
+
+async function onCopyPage(pageNum: number) {
+  const blocks = state.previewDocument.value?.blocks.filter((b) => b.page === pageNum) ?? [];
+  await copyText(blocksToText(blocks), `已複製第 ${pageNum} 頁文字`);
+}
+
+async function onExportAllText() {
+  await copyText(buildAllText(), "已複製全部文字");
+}
+
+function buildAllText(): string {
+  const blocks = state.previewDocument.value?.blocks ?? [];
+  const grouped = new Map<number, SourceBlock[]>();
+  for (const block of blocks) {
+    const pageBlocks = grouped.get(block.page) ?? [];
+    pageBlocks.push(block);
+    grouped.set(block.page, pageBlocks);
+  }
+  const text = [...grouped.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([page, pageBlocks]) => `# 第 ${page} 頁\n${blocksToText(pageBlocks)}`)
+    .join("\n\n");
+  return text;
+}
+
+function onDownloadTextFile() {
+  const text = buildAllText();
+  if (!text.trim()) {
+    ElMessage.warning("沒有可匯出的文字");
+    return;
+  }
+  const baseName = (state.previewDocument.value?.fileName ?? "pdf-parse-result").replace(/\.pdf$/i, "");
+  const fileName = `${baseName}.txt`;
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  ElMessage.success("已產生文字檔");
+}
+
 async function onParse(
   file: File,
   mode: PdfParseModeHint,
-  backend: ParserBackend,
   advanced: PdfAdvancedOptions
 ) {
   state.setStatus("uploading");
@@ -147,7 +229,6 @@ async function onParse(
   const formData = new FormData();
   formData.append("file", file);
   formData.append("parseMode", mode);
-  formData.append("parserBackend", backend);
   formData.append("advancedOptions", JSON.stringify(advanced));
 
   try {
@@ -160,7 +241,8 @@ async function onParse(
 
     if (!response.ok) {
       const err = await response.json().catch(() => ({ error: "Unknown error" }));
-      throw new Error(err.error ?? `HTTP ${response.status}`);
+      const message = err.detail ? `${err.error ?? `HTTP ${response.status}`}: ${err.detail}` : err.error;
+      throw new Error(message ?? `HTTP ${response.status}`);
     }
 
     const doc = await response.json();
@@ -254,6 +336,13 @@ function onHighlightClick(blockId: string) {
   background: var(--el-bg-color-page);
   border-bottom: 1px solid var(--el-border-color-lighter);
   flex-shrink: 0;
+}
+
+.pane-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .pane-title {

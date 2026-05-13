@@ -13,28 +13,9 @@
           <el-option label="混合 PDF / 不確定" value="mixed_or_unknown" />
         </el-select>
 
-        <el-select
-          v-model="parserBackend"
-          class="backend-select"
-          :disabled="isProcessing"
-        >
-          <template #prefix>
-            <el-icon><Connection /></el-icon>
-          </template>
-          <el-option label="Auto（ODL 主力）" value="auto">
-            <span>Auto（ODL 主力）</span>
-            <span class="option-desc">OpenDataLoader dual-pass</span>
-          </el-option>
-          <el-option label="pdf.js-extract" value="pdfjs-extract">
-            <span>pdf.js-extract</span>
-            <span class="option-desc">快速原生文字解析</span>
-          </el-option>
-          <el-option label="OpenDataLoader" value="opendataloader">
-            <span>OpenDataLoader</span>
-            <el-tag size="small" type="success" class="option-tag">#1 benchmark</el-tag>
-            <span class="option-desc">精準排版 + 表格 + bbox</span>
-          </el-option>
-        </el-select>
+        <el-tag type="success" class="backend-static">
+          OpenDataLoader dual-pass
+        </el-tag>
 
         <el-button
           type="primary"
@@ -63,15 +44,16 @@
             <el-button :icon="Setting" :disabled="isProcessing">進階</el-button>
           </template>
           <div class="advanced-options">
-            <el-checkbox v-model="advanced.forceNativeText">強制使用原生文字解析</el-checkbox>
+            <el-checkbox v-model="advanced.forceNativeText">偏好原生文字處理（僅作提示）</el-checkbox>
             <el-checkbox v-model="advanced.forceOcr">強制使用 OCR / 掃描解析</el-checkbox>
             <el-checkbox v-model="advanced.enableComplexTableParsing">啟用複雜表格解析</el-checkbox>
             <el-checkbox v-model="advanced.enableSafetyFiltering">啟用安全過濾 hidden/off-page text</el-checkbox>
             <el-divider />
             <div class="advanced-hint">Page-level OCR repair（OpenDataLoader 仍為主解析；需 Poppler + ONNX 模型）</div>
             <el-checkbox v-model="advanced.enableOcrRepair">啟用 eSearch-OCR repair</el-checkbox>
+            <div class="advanced-hint">啟用後可在上方工具列直接調整 OCR profile 與頁數限制；頁數 0 代表不限制。</div>
             <el-checkbox v-model="advanced.repairOnScanOrLowText" :disabled="!advanced.enableOcrRepair">
-              觸發：掃描／低文字量（preflight）
+              觸發：掃描／低文字量（ODL 統計）
             </el-checkbox>
             <el-checkbox v-model="advanced.repairOnStructuralHole" :disabled="!advanced.enableOcrRepair">
               觸發：ODL 結構空洞（空 block／空表格）
@@ -80,59 +62,71 @@
         </el-popover>
       </div>
 
+      <div v-if="advanced.enableOcrRepair" class="ocr-toolbar">
+        <el-tag type="warning" effect="plain">OCR repair</el-tag>
+        <div class="ocr-control">
+          <span class="ocr-label">Profile</span>
+          <el-select
+            v-model="advanced.ocrRepairProfile"
+            size="small"
+            class="ocr-profile-select"
+            :disabled="isProcessing"
+          >
+            <el-option label="Dev（v5 mobile / 快速）" value="dev" />
+            <el-option label="Quality（v5 server / 完整）" value="quality" />
+          </el-select>
+        </div>
+        <div class="ocr-control">
+          <span class="ocr-label">最多 OCR 頁</span>
+          <el-input-number
+            v-model="advanced.maxOcrPages"
+            size="small"
+            class="ocr-page-limit"
+            :min="0"
+            :max="100"
+            :disabled="isProcessing"
+          />
+          <span class="ocr-help">0 = 不限制</span>
+        </div>
+      </div>
+
       <div v-if="selectedFile" class="file-info">
         <el-icon><Document /></el-icon>
         <span>{{ selectedFile.name }}</span>
         <span class="file-size">{{ formatFileSize(selectedFile.size) }}</span>
-        <el-tag size="small" :type="backendTagType" class="backend-badge">
-          {{ backendLabel }}
-        </el-tag>
+        <el-tag size="small" type="success" class="backend-badge">OpenDataLoader</el-tag>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref } from "vue";
 import { ElMessage } from "element-plus";
-import { Upload, Setting, Document, Connection } from "@element-plus/icons-vue";
-import type { PdfParseModeHint, PdfAdvancedOptions, ParserBackend } from "../../ingestion/types.js";
+import { Upload, Setting, Document } from "@element-plus/icons-vue";
+import type { PdfParseModeHint, PdfAdvancedOptions } from "../../ingestion/types.js";
 
 const props = defineProps<{
   isProcessing: boolean;
 }>();
 
 const emit = defineEmits<{
-  parse: [file: File, mode: PdfParseModeHint, backend: ParserBackend, advanced: PdfAdvancedOptions];
+  parse: [file: File, mode: PdfParseModeHint, advanced: PdfAdvancedOptions];
 }>();
 
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const selectedFile = ref<File | null>(null);
 const parseMode = ref<PdfParseModeHint>("auto");
-const parserBackend = ref<ParserBackend>("opendataloader");
 const advanced = ref<PdfAdvancedOptions>({
   forceNativeText: false,
   forceOcr: false,
   enableComplexTableParsing: false,
   enableSafetyFiltering: false,
-  enableOcrRepair: false,
-  repairOnScanOrLowText: false,
-  repairOnStructuralHole: false,
-});
-
-const backendLabel = computed(() => {
-  const map: Record<ParserBackend, string> = {
-    auto: "Auto",
-    "pdfjs-extract": "pdf.js-extract",
-    opendataloader: "OpenDataLoader",
-  };
-  return map[parserBackend.value];
-});
-
-const backendTagType = computed((): "success" | "warning" | "info" => {
-  if (parserBackend.value === "opendataloader") return "success";
-  if (parserBackend.value === "pdfjs-extract") return "info";
-  return "warning";
+  enableOcrRepair: true,
+  ocrRepairProfile: "dev",
+  maxOcrPages: 0,
+  repairOnScanOrLowText: true,
+  repairOnStructuralHole: true,
 });
 
 function triggerFileInput() {
@@ -150,7 +144,7 @@ function onFileSelected(event: Event) {
   }
 
   selectedFile.value = file;
-  emit("parse", file, parseMode.value, parserBackend.value, advanced.value);
+  emit("parse", file, parseMode.value, advanced.value);
 
   // Reset input so same file can be re-uploaded
   input.value = "";
@@ -177,22 +171,51 @@ function formatFileSize(bytes: number): string {
   flex-wrap: wrap;
 }
 
+.ocr-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--el-color-warning-light-7);
+  border-radius: 8px;
+  background: var(--el-color-warning-light-9);
+}
+
+.ocr-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ocr-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--el-text-color-regular);
+}
+
+.ocr-profile-select {
+  width: 180px;
+}
+
+.ocr-page-limit {
+  width: 120px;
+}
+
+.ocr-help {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
 .mode-select {
   width: 200px;
 }
 
-.backend-select {
-  width: 180px;
-}
-
-.option-desc {
-  font-size: 11px;
-  color: var(--el-text-color-placeholder);
-  margin-left: 6px;
-}
-
-.option-tag {
-  margin-left: 4px;
+.backend-static {
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
 }
 
 .hidden-input {
@@ -226,5 +249,17 @@ function formatFileSize(bytes: number): string {
   font-size: 11px;
   color: var(--el-text-color-placeholder);
   line-height: 1.4;
+}
+
+.advanced-row {
+  display: grid;
+  grid-template-columns: 88px 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.advanced-label {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 </style>
