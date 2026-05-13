@@ -8,9 +8,11 @@
       <div
         v-for="pageNum in pageNumbers"
         :key="pageNum"
+        :ref="(el) => setPageGroupRef(pageNum, el as HTMLElement | null)"
         :data-page="pageNum"
         class="page-group"
       >
+        <!-- Page header -->
         <div class="page-header">
           <span class="page-label">第 {{ pageNum }} 頁</span>
           <el-tag
@@ -21,42 +23,24 @@
           >
             {{ getDetectionLabel(pageNum) }}
           </el-tag>
+          <span class="page-block-count">{{ getPageBlocks(pageNum).length }} blocks</span>
         </div>
 
+        <!-- Merged page text: clickable, readable -->
         <div
-          v-for="block in getPageBlocks(pageNum)"
-          :key="block.id"
-          :ref="(el) => setBlockRef(block.id, el as HTMLElement | null)"
-          :class="['block-item', { active: activeBlockId === block.id }]"
-          @click="onBlockClick(block)"
-          @mouseenter="onBlockHover(block)"
-          @mouseleave="onBlockLeave"
+          class="page-merged-text"
+          :class="{ 'has-active': hasActiveBlockOnPage(pageNum) }"
+          @click="onPageTextClick(pageNum)"
         >
-          <div class="block-header">
-            <el-tag :type="blockTypeTagType(block.blockType)" size="small">
-              {{ blockTypeLabel(block.blockType) }}
-            </el-tag>
-            <span class="block-parser">{{ block.parser }}</span>
-            <el-tag
-              v-if="block.confidence < 0.6"
-              type="warning"
-              size="small"
-              class="confidence-tag"
-            >
-              低信心 {{ (block.confidence * 100).toFixed(0) }}%
-            </el-tag>
-          </div>
-
-          <div class="block-text">{{ truncateText(block.text, 200) }}</div>
-
-          <div v-if="block.warnings.length > 0" class="block-warnings">
-            <el-icon color="var(--el-color-warning)"><Warning /></el-icon>
-            <span v-for="(w, i) in block.warnings" :key="i" class="warning-text">{{ w }}</span>
-          </div>
-
-          <div v-if="!hasBbox(block)" class="no-bbox-warning">
-            <el-icon><InfoFilled /></el-icon> 無可定位座標
-          </div>
+          <span
+            v-for="block in getPageBlocks(pageNum)"
+            :key="block.id"
+            :class="['inline-block-span', getBlockTypeClass(block), { active: activeBlockId === block.id }]"
+            :title="blockTypeLabel(block.blockType)"
+            @click.stop="onBlockClick(block)"
+            @mouseenter="onBlockHover(block)"
+            @mouseleave="onBlockLeave"
+          >{{ block.text }}</span>
         </div>
       </div>
     </el-scrollbar>
@@ -65,7 +49,6 @@
 
 <script setup lang="ts">
 import { ref, computed } from "vue";
-import { Warning, InfoFilled } from "@element-plus/icons-vue";
 import type { SourceBlock, PageDetection } from "../../ingestion/types.js";
 
 const props = defineProps<{
@@ -78,14 +61,15 @@ const emit = defineEmits<{
   blockClick: [block: SourceBlock];
   blockHover: [block: SourceBlock];
   blockLeave: [];
+  pageClick: [pageNum: number];
 }>();
 
 const scrollbarRef = ref<{ wrapRef: HTMLElement } | null>(null);
-const blockRefs = new Map<string, HTMLElement>();
+const pageGroupRefs = new Map<number, HTMLElement>();
 
-function setBlockRef(id: string, el: HTMLElement | null) {
-  if (el) blockRefs.set(id, el);
-  else blockRefs.delete(id);
+function setPageGroupRef(pageNum: number, el: HTMLElement | null) {
+  if (el) pageGroupRefs.set(pageNum, el);
+  else pageGroupRefs.delete(pageNum);
 }
 
 const pageNumbers = computed(() => {
@@ -95,6 +79,10 @@ const pageNumbers = computed(() => {
 
 function getPageBlocks(page: number) {
   return props.blocks.filter((b) => b.page === page);
+}
+
+function hasActiveBlockOnPage(page: number): boolean {
+  return getPageBlocks(page).some((b) => b.id === props.activeBlockId);
 }
 
 function getPageDetection(page: number) {
@@ -140,22 +128,16 @@ function blockTypeLabel(type: SourceBlock["blockType"]): string {
   return labels[type] ?? type;
 }
 
-function blockTypeTagType(
-  type: SourceBlock["blockType"]
-): "success" | "warning" | "danger" | "info" | "" {
-  if (type === "heading") return "success";
-  if (type === "table") return "warning";
-  if (type === "image_ocr") return "info";
-  return "";
-}
-
-function hasBbox(block: SourceBlock): boolean {
-  return block.bbox.width > 0 && block.bbox.height > 0;
-}
-
-function truncateText(text: string, maxLen: number): string {
-  if (text.length <= maxLen) return text;
-  return text.slice(0, maxLen) + "…";
+function getBlockTypeClass(block: SourceBlock): string {
+  const classMap: Partial<Record<SourceBlock["blockType"], string>> = {
+    heading: "type-heading",
+    table: "type-table",
+    list: "type-list",
+    footer: "type-footer",
+    header: "type-header",
+    image_ocr: "type-image",
+  };
+  return classMap[block.blockType] ?? "";
 }
 
 function onBlockClick(block: SourceBlock) {
@@ -170,12 +152,18 @@ function onBlockLeave() {
   emit("blockLeave");
 }
 
+function onPageTextClick(pageNum: number) {
+  emit("pageClick", pageNum);
+}
+
 function scrollToBlock(blockId: string) {
-  const el = blockRefs.get(blockId);
+  const block = props.blocks.find((b) => b.id === blockId);
+  if (!block) return;
+
+  const el = pageGroupRefs.get(block.page);
   if (el && scrollbarRef.value?.wrapRef) {
     const container = scrollbarRef.value.wrapRef;
-    const offsetTop = el.offsetTop;
-    container.scrollTo({ top: offsetTop - 80, behavior: "smooth" });
+    container.scrollTo({ top: el.offsetTop - 60, behavior: "smooth" });
   }
 }
 
@@ -203,19 +191,20 @@ defineExpose({ scrollToBlock });
 }
 
 .page-group {
-  margin-bottom: 8px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
 }
 
 .page-header {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 12px 4px;
+  padding: 6px 12px 5px;
   position: sticky;
   top: 0;
-  background: var(--el-bg-color);
+  background: var(--el-bg-color-page);
   z-index: 10;
-  border-bottom: 1px solid var(--el-border-color-lighter);
+  border-bottom: 1px solid var(--el-border-color-extra-light);
 }
 
 .page-label {
@@ -228,70 +217,64 @@ defineExpose({ scrollToBlock });
   font-size: 11px;
 }
 
-.block-item {
-  padding: 10px 12px;
-  margin: 4px 8px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 6px;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  background: var(--el-bg-color-overlay);
-}
-
-.block-item:hover {
-  border-color: var(--el-color-primary-light-5);
-  background: var(--el-color-primary-light-9);
-}
-
-.block-item.active {
-  border-color: var(--el-color-primary);
-  background: var(--el-color-primary-light-9);
-  box-shadow: 0 0 0 2px var(--el-color-primary-light-7);
-}
-
-.block-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 6px;
-}
-
-.block-parser {
+.page-block-count {
+  margin-left: auto;
   font-size: 11px;
   color: var(--el-text-color-placeholder);
-  margin-left: auto;
 }
 
-.confidence-tag {
-  font-size: 11px;
-}
-
-.block-text {
+/* Merged readable text area */
+.page-merged-text {
+  padding: 8px 12px 10px;
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.8;
   color: var(--el-text-color-regular);
+  cursor: default;
   word-break: break-all;
 }
 
-.block-warnings {
-  display: flex;
-  align-items: flex-start;
-  gap: 4px;
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--el-color-warning);
+.page-merged-text.has-active {
+  background: var(--el-color-warning-light-9);
 }
 
-.warning-text {
-  line-height: 1.4;
+/* Inline block spans - each block is an inline span in the merged text */
+.inline-block-span {
+  cursor: pointer;
+  border-radius: 2px;
+  transition: background 0.1s;
+  padding: 0 1px;
 }
 
-.no-bbox-warning {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: 4px;
+.inline-block-span:hover {
+  background: var(--el-color-primary-light-8);
+}
+
+.inline-block-span.active {
+  background: var(--el-color-warning-light-7);
+  outline: 1px solid var(--el-color-warning-light-5);
+  border-radius: 2px;
+}
+
+/* Block type color hints */
+.inline-block-span.type-heading {
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.inline-block-span.type-table {
+  font-family: monospace;
   font-size: 12px;
+  background: var(--el-fill-color-lighter);
+}
+
+.inline-block-span.type-footer,
+.inline-block-span.type-header {
   color: var(--el-text-color-placeholder);
+  font-size: 12px;
+}
+
+.inline-block-span.type-image {
+  color: var(--el-color-info);
+  font-style: italic;
 }
 </style>

@@ -10,6 +10,9 @@
     <div v-if="routingSummary" class="routing-summary">
       <el-icon><InfoFilled /></el-icon>
       <span>{{ routingSummary }}</span>
+      <el-tag v-if="activeBackendLabel" size="small" :type="activeBackendTagType" class="backend-tag">
+        {{ activeBackendLabel }}
+      </el-tag>
     </div>
 
     <!-- Warnings -->
@@ -44,6 +47,7 @@
           @block-click="onBlockClick"
           @block-hover="onBlockHover"
           @block-leave="onBlockLeave"
+          @page-click="onPageClick"
         />
       </div>
 
@@ -77,7 +81,7 @@ import ParsedBlocksPane from "../components/ParsedBlocksPane.vue";
 import PdfSourceViewer from "../components/PdfSourceViewer.vue";
 import ParserWarnings from "../components/ParserWarnings.vue";
 import { usePreviewState } from "../state/previewSelection.js";
-import type { PdfParseModeHint, PdfAdvancedOptions, SourceBlock } from "../../ingestion/types.js";
+import type { PdfParseModeHint, PdfAdvancedOptions, ParserBackend, SourceBlock } from "../../ingestion/types.js";
 
 const state = usePreviewState();
 const parsedBlocksPaneRef = ref<InstanceType<typeof ParsedBlocksPane> | null>(null);
@@ -87,6 +91,24 @@ const hoverBlockId = ref<string | null>(null);
 const isProcessing = computed(
   () => state.status.value === "uploading" || state.status.value === "parsing"
 );
+
+const activeBackendLabel = computed(() => {
+  const doc = state.previewDocument.value;
+  if (!doc || doc.blocks.length === 0) return null;
+  const parsers = new Set(doc.blocks.map((b) => b.parser));
+  if (parsers.has("pdfjs-extract")) return "pdf.js-extract";
+  const hasOdl = parsers.has("opendataloader-default");
+  const hasRepair = parsers.has("esearch-ocr-repair");
+  if (hasOdl && hasRepair) return "OpenDataLoader + eSearch-OCR";
+  if (hasRepair && !hasOdl) return "eSearch-OCR";
+  if (hasOdl || [...parsers].some((p) => p.startsWith("opendataloader"))) return "OpenDataLoader";
+  return null;
+});
+
+const activeBackendTagType = computed((): "success" | "info" => {
+  if (activeBackendLabel.value === "OpenDataLoader") return "success";
+  return "info";
+});
 
 const routingSummary = computed(() => {
   const doc = state.previewDocument.value;
@@ -116,6 +138,7 @@ function formatPages(pages: number[]): string {
 async function onParse(
   file: File,
   mode: PdfParseModeHint,
+  backend: ParserBackend,
   advanced: PdfAdvancedOptions
 ) {
   state.setStatus("uploading");
@@ -124,6 +147,7 @@ async function onParse(
   const formData = new FormData();
   formData.append("file", file);
   formData.append("parseMode", mode);
+  formData.append("parserBackend", backend);
   formData.append("advancedOptions", JSON.stringify(advanced));
 
   try {
@@ -161,6 +185,10 @@ function onBlockLeave() {
   hoverBlockId.value = null;
 }
 
+function onPageClick(pageNum: number) {
+  pdfViewerRef.value?.scrollToPage(pageNum);
+}
+
 function onHighlightClick(blockId: string) {
   const blocks = state.previewDocument.value?.blocks ?? [];
   const block = blocks.find((b) => b.id === blockId);
@@ -188,6 +216,10 @@ function onHighlightClick(blockId: string) {
   color: var(--el-text-color-secondary);
   background: var(--el-color-info-light-9);
   border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+.backend-tag {
+  margin-left: auto;
 }
 
 .error-alert {

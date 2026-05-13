@@ -196,6 +196,32 @@ function onCanvasAreaClick() {
   // click on canvas outside highlight does nothing
 }
 
+// PAGE_LABEL_HEIGHT: approximate height of .page-number-label + gap
+const PAGE_LABEL_HEIGHT = 24;
+const SCROLL_MARGIN = 80;
+
+function scrollToBlock(blockId: string) {
+  const block = props.blocks.find((b) => b.id === blockId);
+  if (!block) return;
+
+  const container = pageContainerRefs.get(block.page);
+  const vp = pageViewports.get(block.page);
+  if (!container || !vp || !scrollbarRef.value?.wrapRef) {
+    scrollToPage(block.page);
+    return;
+  }
+
+  const wrap = scrollbarRef.value.wrapRef;
+  // container.offsetTop = top of page-wrapper div
+  // + PAGE_LABEL_HEIGHT = skip the page number label
+  // + bbox.y * vp.height = exact Y position of block within the rendered page
+  const bboxOffsetInPage = block.bbox.y * vp.height;
+  const targetScroll =
+    container.offsetTop + PAGE_LABEL_HEIGHT + bboxOffsetInPage - SCROLL_MARGIN;
+
+  wrap.scrollTo({ top: Math.max(0, targetScroll), behavior: "smooth" });
+}
+
 function scrollToPage(pageNum: number) {
   const container = pageContainerRefs.get(pageNum);
   if (container && scrollbarRef.value?.wrapRef) {
@@ -216,8 +242,7 @@ watch(
   () => props.activeBlockId,
   (blockId) => {
     if (!blockId) return;
-    const block = props.blocks.find((b) => b.id === blockId);
-    if (block) scrollToPage(block.page);
+    scrollToBlock(blockId);
   }
 );
 
@@ -228,7 +253,7 @@ onUnmounted(() => {
   }
 });
 
-defineExpose({ scrollToPage });
+defineExpose({ scrollToPage, scrollToBlock });
 </script>
 
 <style scoped>
