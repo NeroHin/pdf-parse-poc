@@ -2,12 +2,23 @@
   "name": "pdf-parse-poc",
   "version": "1.0.0",
   "type": "module",
+  "engines": {
+    "node": ">=20.20.0 <21"
+  },
+  "volta": {
+    "node": "20.20.2"
+  },
   "scripts": {
+    "predev:server": "node scripts/check-node-version.mjs",
     "dev:server": "tsx watch src/server/main.ts",
     "dev:web": "vite",
     "dev": "concurrently -n server,web -c cyan,magenta \"npm run dev:server\" \"npm run dev:web\"",
     "build": "vite build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "ocr:download-models": "node scripts/download-ocr-models.mjs",
+    "ocr:download-v5-models": "OCR_MODEL_VARIANT=v5-server node scripts/download-ocr-models.mjs models/esearch-ocr-v5",
+    "ocr:download-v5-mobile-models": "OCR_MODEL_VARIANT=v5-mobile node scripts/download-ocr-models.mjs models/esearch-ocr-v5-mobile",
+    "ocr:check-env": "node scripts/check-ocr-env.mjs"
   },
   "dependencies": {
     "@fastify/cors": "^9.0.1",
@@ -19,8 +30,8 @@
     "esearch-ocr": "^8.5.0",
     "fastify": "^4.28.1",
     "onnxruntime-node": "^1.26.0",
+    "opencc": "^1.3.1",
     "p-limit": "^6.2.0",
-    "pdf.js-extract": "^0.2.1",
     "pdfjs-dist": "^4.4.168",
     "sharp": "^0.34.5",
     "uuid": "^10.0.0",
