@@ -4,11 +4,51 @@ export type PdfParseModeHint =
   | "scanned_image"
   | "mixed_or_unknown";
 
+export type ParserBackend = "auto" | "pdfjs-extract" | "opendataloader";
+
+export type OdlJsonItem = {
+  type: string;
+  id: number;
+  "page number": number;
+  "bounding box": [number, number, number, number]; // [left, bottom, right, top] PDF points
+  content?: string;
+  "heading level"?: number;
+  "font size"?: number;
+  rows?: unknown;
+};
+
 export type PdfAdvancedOptions = {
   forceNativeText?: boolean;
   forceOcr?: boolean;
   enableComplexTableParsing?: boolean;
   enableSafetyFiltering?: boolean;
+  /** Master switch: page-level eSearch-OCR repair after OpenDataLoader */
+  enableOcrRepair?: boolean;
+  /** Trigger repair when preflight indicates scan / low extractable text */
+  repairOnScanOrLowText?: boolean;
+  /** Trigger repair when merged ODL JSON still has structural holes (empty blocks / empty tables) */
+  repairOnStructuralHole?: boolean;
+};
+
+/** Per-block lineage for parsers + OCR repair (Rule Extractor should rely on SourceBlock only). */
+export type SourceBlockProvenance = {
+  /** Primary parser id, e.g. opendataloader-default, esearch-ocr-repair */
+  parserId: string;
+  /** Model family / version label when applicable */
+  modelLabel?: string;
+  /** Rasterization parameters when OCR was used */
+  raster?: {
+    engine: "poppler";
+    dpi: number;
+    widthPx: number;
+    heightPx: number;
+    pagePtsWidth: number;
+    pagePtsHeight: number;
+  };
+  /** Ordered repair / fallback steps applied for this block */
+  fallbackReasons?: string[];
+  /** Why OCR repair ran on this page */
+  repairTriggers?: ("scan_or_low_text" | "structural_hole")[];
 };
 
 export type PdfParseHint = {
@@ -32,6 +72,7 @@ export type PageDetection = {
   suspectedGarbledText: boolean;
   suspectedTableHeavy: boolean;
   suspectedHiddenOrOffPageText: boolean;
+  suspectedCidFontEncoding: boolean;
   layoutClass:
     | "native_text"
     | "scanned_image"
@@ -73,12 +114,14 @@ export type SourceBlock = {
     | "pdfjs-extract"
     | "opendataloader-default"
     | "opendataloader-hybrid"
-    | "opendataloader-safety";
+    | "opendataloader-safety"
+    | "esearch-ocr-repair";
   parserVersion: string;
   extractionMode: "native_text" | "ocr" | "hybrid" | "safety";
   confidence: number;
   warnings: string[];
   sourceHash: string;
+  provenance?: SourceBlockProvenance;
 };
 
 export type PdfPreviewDocument = {
@@ -117,6 +160,12 @@ export type PdfjsPageInfo = {
   height: number;
 };
 
+export type PreflightPageInfo = {
+  num: number;
+  width: number;
+  height: number;
+};
+
 export type PdfjsPage = {
   pageInfo: PdfjsPageInfo;
   links: string[];
@@ -146,6 +195,8 @@ export type PageTextStats = {
   cjkCharRatio: number;
   whitespaceCount: number;
   whitespaceRatio: number;
+  replacementCharCount: number;
+  replacementCharRatio: number;
   avgFontSize: number | null;
   bboxCoverageRatio: number;
   hasExtractableText: boolean;
@@ -188,5 +239,8 @@ export type IngestionInput = {
   fileName: string;
   documentId: string;
   parseMode: PdfParseModeHint;
+  parserBackend?: ParserBackend;
   advancedOptions?: PdfAdvancedOptions;
+  /** Max concurrent OCR repair pages (default 2). Env: OCR_REPAIR_MAX_PAGES_IN_FLIGHT */
+  ocrRepairConcurrency?: number;
 };

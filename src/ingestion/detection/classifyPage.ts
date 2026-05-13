@@ -6,6 +6,8 @@ const TABLE_SHORT_ITEM_MIN_COUNT = 15;
 const REPEATED_COORD_THRESHOLD = 4;
 const REPEATED_COORD_DISTINCT = 6;
 const GARBLED_WHITESPACE_RATIO_THRESHOLD = 0.7;
+// CID font / ToUnicode missing: ≥30% replacement chars → likely garbled
+const CID_REPLACEMENT_RATIO_THRESHOLD = 0.3;
 
 function hasBadUnicodeSignal(stats: PageTextStats): boolean {
   return (
@@ -78,6 +80,11 @@ export function classifyPage(
 
   const suspectedGarbledText = hasBadUnicodeSignal(stats);
 
+  // CID font without ToUnicode: high ratio of U+FFFD replacement characters
+  const suspectedCidFontEncoding =
+    stats.replacementCharRatio >= CID_REPLACEMENT_RATIO_THRESHOLD &&
+    stats.charCount >= 10;
+
   // Table-heavy: only trigger if items are very short AND x coordinates repeat in columns
   const suspectedTableHeavy = !suspectedScanned && hasManyShortAlignedItems(stats);
 
@@ -88,7 +95,7 @@ export function classifyPage(
 
   let layoutClass: PageDetection["layoutClass"];
 
-  if (suspectedHiddenOrOffPageText || suspectedGarbledText) {
+  if (suspectedHiddenOrOffPageText || suspectedGarbledText || suspectedCidFontEncoding) {
     layoutClass = "suspicious";
   } else if (suspectedScanned) {
     layoutClass = "scanned_image";
@@ -99,6 +106,12 @@ export function classifyPage(
   }
 
   const { parserRecommendation, reasons } = buildRecommendation(layoutClass);
+
+  if (suspectedCidFontEncoding) {
+    reasons.push(
+      `CID font encoding issue: ${(stats.replacementCharRatio * 100).toFixed(0)}% replacement chars`
+    );
+  }
 
   return {
     page: stats.pageNum,
@@ -113,6 +126,7 @@ export function classifyPage(
     suspectedGarbledText,
     suspectedTableHeavy,
     suspectedHiddenOrOffPageText,
+    suspectedCidFontEncoding,
     layoutClass,
     parserRecommendation,
     reasons,

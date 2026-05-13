@@ -11,6 +11,7 @@ import type {
   PdfPreviewDocument,
   PdfParseModeHint,
   PdfAdvancedOptions,
+  ParserBackend,
 } from "../../ingestion/types.js";
 
 export async function pdfParseRoutes(fastify: FastifyInstance): Promise<void> {
@@ -22,6 +23,7 @@ export async function pdfParseRoutes(fastify: FastifyInstance): Promise<void> {
     const parts = request.parts();
 
     let parseMode: PdfParseModeHint = "auto";
+    let parserBackend: ParserBackend = "auto";
     let advancedOptions: PdfAdvancedOptions = {};
     let documentId = uuidv4();
     let fileName = "upload.pdf";
@@ -40,6 +42,8 @@ export async function pdfParseRoutes(fastify: FastifyInstance): Promise<void> {
       } else if (part.type === "field") {
         if (part.fieldname === "parseMode") {
           parseMode = part.value as PdfParseModeHint;
+        } else if (part.fieldname === "parserBackend") {
+          parserBackend = part.value as ParserBackend;
         } else if (part.fieldname === "advancedOptions") {
           try {
             advancedOptions = JSON.parse(part.value as string);
@@ -61,6 +65,7 @@ export async function pdfParseRoutes(fastify: FastifyInstance): Promise<void> {
         fileName,
         documentId,
         parseMode,
+        parserBackend,
         advancedOptions,
       });
     } catch (err) {

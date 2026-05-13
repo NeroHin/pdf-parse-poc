@@ -5,6 +5,29 @@ import { toNormalizedBbox } from "./bbox.js";
 
 const PDFJS_EXTRACT_VERSION = "0.2.1";
 
+// Unicode ligature → constituent characters
+const LIGATURE_MAP: Record<string, string> = {
+  "\uFB00": "ff",
+  "\uFB01": "fi",
+  "\uFB02": "fl",
+  "\uFB03": "ffi",
+  "\uFB04": "ffl",
+  "\uFB05": "st",
+  "\uFB06": "st",
+};
+
+const LIGATURE_RE = /[\uFB00-\uFB06]/g;
+
+function normalizeText(raw: string): string {
+  // Expand ligatures
+  let text = raw.replace(LIGATURE_RE, (c) => LIGATURE_MAP[c] ?? c);
+  // Remove U+FFFD replacement chars (CID encoding failure residue)
+  text = text.replace(/\uFFFD/g, "");
+  // Collapse repeated whitespace
+  text = text.replace(/\s+/g, " ").trim();
+  return text;
+}
+
 type RawTextItem = {
   str: string;
   x: number;
@@ -117,7 +140,8 @@ export function normalizePdfjsPageToBlocks(
 
   return groups
     .map((group): SourceBlock | null => {
-      const text = group.items.map((i) => i.str).join(" ").trim();
+      const raw = group.items.map((i) => i.str).join(" ");
+      const text = normalizeText(raw);
       if (text.length === 0) return null;
 
       const avgFontSize =

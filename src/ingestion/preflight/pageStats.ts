@@ -1,6 +1,7 @@
 import type { PdfjsPage, PageTextStats } from "../types.js";
 
 const CJK_REGEX = /[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u30ff\uac00-\ud7af]/;
+const REPLACEMENT_CHAR = "\uFFFD";
 const TINY_FONT_THRESHOLD = 2;
 const OFF_PAGE_MARGIN = 5;
 
@@ -22,6 +23,7 @@ export function computePageStats(page: PdfjsPage): PageTextStats {
   let charCount = 0;
   let cjkCharCount = 0;
   let whitespaceCount = 0;
+  let replacementCharCount = 0;
   let offPageItemCount = 0;
   let tinyTextItemCount = 0;
 
@@ -44,6 +46,7 @@ export function computePageStats(page: PdfjsPage): PageTextStats {
       } else {
         charCount++;
         if (CJK_REGEX.test(ch)) cjkCharCount++;
+        if (ch === REPLACEMENT_CHAR) replacementCharCount++;
       }
     }
 
@@ -66,6 +69,7 @@ export function computePageStats(page: PdfjsPage): PageTextStats {
   const totalChars = charCount + whitespaceCount;
   const whitespaceRatio = totalChars > 0 ? whitespaceCount / totalChars : 0;
   const cjkCharRatio = charCount > 0 ? cjkCharCount / charCount : 0;
+  const replacementCharRatio = charCount > 0 ? replacementCharCount / charCount : 0;
   const avgFontSize =
     fontSizes.length > 0
       ? fontSizes.reduce((a, b) => a + b, 0) / fontSizes.length
@@ -83,6 +87,8 @@ export function computePageStats(page: PdfjsPage): PageTextStats {
     cjkCharRatio,
     whitespaceCount,
     whitespaceRatio,
+    replacementCharCount,
+    replacementCharRatio,
     avgFontSize,
     bboxCoverageRatio,
     hasExtractableText,
