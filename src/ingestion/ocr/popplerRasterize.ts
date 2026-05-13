@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync } from "node:fs";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { resolvePopplerBinary } from "../preflight/popplerPreflight.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -25,9 +25,7 @@ export async function rasterizePdfPagePoppler(
 ): Promise<PopplerRasterResult> {
   mkdirSync(outDir, { recursive: true });
 
-  const pdftoppm =
-    process.env.PDFTOPPM_PATH ??
-    (existsSync("/opt/homebrew/bin/pdftoppm") ? "/opt/homebrew/bin/pdftoppm" : "pdftoppm");
+  const pdftoppm = resolvePopplerBinary("pdftoppm");
 
   const outPrefix = join(outDir, basename);
 
@@ -43,7 +41,16 @@ export async function rasterizePdfPagePoppler(
     outPrefix,
   ]);
 
-  const pngPath = `${outPrefix}-${pageNum}.png`;
+  const expected = `${outPrefix}-${pageNum}.png`;
+  const padded = join(outDir, `${basename}-${String(pageNum).padStart(2, "0")}.png`);
+  const produced =
+    [expected, padded].find((p) => existsSync(p)) ??
+    readdirSync(outDir)
+      .filter((name) => name.startsWith(`${basename}-`) && name.endsWith(".png"))
+      .map((name) => join(outDir, name))
+      .sort()[0];
+
+  const pngPath = produced ?? expected;
   if (!existsSync(pngPath)) {
     throw new Error(`pdftoppm did not produce ${pngPath}`);
   }

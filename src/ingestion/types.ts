@@ -4,8 +4,6 @@ export type PdfParseModeHint =
   | "scanned_image"
   | "mixed_or_unknown";
 
-export type ParserBackend = "auto" | "pdfjs-extract" | "opendataloader";
-
 export type OdlJsonItem = {
   type: string;
   id: number;
@@ -28,6 +26,23 @@ export type PdfAdvancedOptions = {
   repairOnScanOrLowText?: boolean;
   /** Trigger repair when merged ODL JSON still has structural holes (empty blocks / empty tables) */
   repairOnStructuralHole?: boolean;
+  /** OCR runtime profile: dev is faster, quality is final validation. */
+  ocrRepairProfile?: "dev" | "quality";
+  /** Optional cap for OCR repair pages. Useful for fast smoke tests. */
+  maxOcrPages?: number;
+};
+
+export type OcrRepairAttempt = {
+  stage:
+    | "poppler_raster"
+    | "primary_ocr"
+    | "preprocess_greyscale_normalize"
+    | "reraster"
+    | "fallback_rec_ppocr_v4_doc";
+  dpi?: number;
+  meanConfidence?: number;
+  paragraphCount?: number;
+  modelLabel?: string;
 };
 
 /** Per-block lineage for parsers + OCR repair (Rule Extractor should rely on SourceBlock only). */
@@ -47,8 +62,28 @@ export type SourceBlockProvenance = {
   };
   /** Ordered repair / fallback steps applied for this block */
   fallbackReasons?: string[];
+  /** Structured OCR attempts for audit/debugging. */
+  ocrAttempts?: OcrRepairAttempt[];
   /** Why OCR repair ran on this page */
-  repairTriggers?: ("scan_or_low_text" | "structural_hole")[];
+  repairTriggers?: ("scan_or_low_text" | "structural_hole" | "table_layout")[];
+  /** Original OCR text and deterministic cleanup steps applied before display/search. */
+  textCleanup?: {
+    originalText: string;
+    normalizedText: string;
+    openccConfig?: "s2tw.json";
+    fixes: {
+      type: "opencc" | "ocr_confusion" | "whitespace" | "punctuation";
+      before: string;
+      after: string;
+    }[];
+  };
+  /** eSearch layout metadata used to reconstruct reading order. */
+  layout?: {
+    strategy: "esearch_paragraphs" | "esearch_columns" | "two_column_legal_table" | "two_column_table";
+    columnRole?: "title" | "article" | "explanation" | "left" | "right" | "unknown";
+    columnIndex?: number;
+    columnCount?: number;
+  };
 };
 
 export type PdfParseHint = {
@@ -80,7 +115,6 @@ export type PageDetection = {
     | "suspicious"
     | "complex_layout";
   parserRecommendation:
-    | "pdfjs"
     | "opendataloader_default"
     | "opendataloader_hybrid"
     | "opendataloader_safety";
@@ -111,7 +145,6 @@ export type SourceBlock = {
   text: string;
   bbox: BboxCoords;
   parser:
-    | "pdfjs-extract"
     | "opendataloader-default"
     | "opendataloader-hybrid"
     | "opendataloader-safety"
@@ -140,49 +173,10 @@ export type PreviewSelection = {
   bbox: BboxCoords;
 };
 
-export type PdfjsTextItem = {
-  x: number;
-  y: number;
-  str: string;
-  dir: string;
-  width: number;
-  height: number;
-  fontName: string;
-};
-
-export type PdfjsPageInfo = {
-  num: number;
-  scale: number;
-  rotation: number;
-  offsetX: number;
-  offsetY: number;
-  width: number;
-  height: number;
-};
-
 export type PreflightPageInfo = {
   num: number;
   width: number;
   height: number;
-};
-
-export type PdfjsPage = {
-  pageInfo: PdfjsPageInfo;
-  links: string[];
-  content: PdfjsTextItem[];
-};
-
-export type PdfjsExtractResult = {
-  filename: string;
-  meta: Record<string, unknown>;
-  pdfInfo: {
-    numpages: number;
-    numrender: number;
-    info: Record<string, unknown>;
-    metadata: Record<string, unknown>;
-    version: string;
-  };
-  pages: PdfjsPage[];
 };
 
 export type PageTextStats = {
@@ -210,11 +204,10 @@ export type PageTextStats = {
 export type ParserRoutingEntry = {
   pages: number[];
   parser:
-    | "pdfjs"
     | "opendataloader_default"
     | "opendataloader_hybrid"
     | "opendataloader_safety";
-  reason: "system_detection" | "hint_plus_detection" | "hint_allowed_by_detection";
+  reason: "system_detection" | "hint_plus_detection";
 };
 
 export type ParserRoutingPlan = ParserRoutingEntry[];
@@ -239,7 +232,6 @@ export type IngestionInput = {
   fileName: string;
   documentId: string;
   parseMode: PdfParseModeHint;
-  parserBackend?: ParserBackend;
   advancedOptions?: PdfAdvancedOptions;
   /** Max concurrent OCR repair pages (default 2). Env: OCR_REPAIR_MAX_PAGES_IN_FLIGHT */
   ocrRepairConcurrency?: number;

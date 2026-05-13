@@ -19,7 +19,7 @@ const JAVA_HOME =
     ? "/opt/homebrew/opt/openjdk"
     : undefined);
 
-const ODL_VERSION = "2.4.3";
+const ODL_VERSION = "1.10.1";
 
 // Excluded block types that have no meaningful text content
 const SKIP_TYPES = new Set(["footer", "header", "image", "picture"]);

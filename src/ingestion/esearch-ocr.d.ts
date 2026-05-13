@@ -6,6 +6,8 @@ declare module "esearch-ocr" {
     log?: boolean;
   }): void;
 
+  export function analyzeLayout(src: unknown, opts?: unknown): unknown;
+
   export function init(opts: unknown): Promise<{
     ocr: (src: unknown) => Promise<{
       parragraphs?: Array<{
@@ -18,6 +20,9 @@ declare module "esearch-ocr" {
           [number, number],
         ];
       }>;
+      columns?: unknown[];
+      readingDir?: unknown;
+      angle?: unknown;
       src?: unknown;
     }>;
   }>;

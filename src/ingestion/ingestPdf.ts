@@ -1,20 +1,57 @@
 import { mkdirSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import type { IngestionInput, PdfParseHint, SourceBlock } from "./types.js";
-import { pdfjsPreflight } from "./preflight/pdfjsPreflight.js";
+import type { IngestionInput, PageTextStats, PdfParseHint, SourceBlock } from "./types.js";
+import { popplerPreflight, type PreflightResult } from "./preflight/popplerPreflight.js";
+import { buildOdlPageStats } from "./preflight/odlPageStats.js";
 import { classifyPage } from "./detection/classifyPage.js";
-import { runPdfjsAdapter } from "./parsers/pdfjsAdapter.js";
 import { runOpendataloaderAdapter } from "./parsers/opendataloaderAdapter.js";
 import { dedupeBlocks } from "./normalize/dedupe.js";
 import { evaluateExtractionQuality } from "./quality/extractionQuality.js";
 import { buildReviewPayload } from "./review/buildReviewPayload.js";
 import type { ReviewPayload } from "./review/buildReviewPayload.js";
 import { computeOcrRepairPages } from "./ocr/ocrTriggers.js";
-import { resolveOcrModelsFromEnv } from "./ocr/modelPaths.js";
+import { resolveOcrModelsFromEnv, type OcrModelProfile } from "./ocr/modelPaths.js";
 import { runEsearchOcrRepairForPages } from "./ocr/esearchOcrRepair.js";
 import { mergeOdlBlocksWithOcrRepair } from "./ocr/mergeOdlAndOcr.js";
 
 const TMP_DIR = new URL("../../../tmp", import.meta.url).pathname;
+
+type OcrRuntimeProfile = {
+  profile: OcrModelProfile;
+  dpiPrimary: number;
+  dpiFallback: number;
+  maxPages?: number;
+};
+
+function resolveOcrRuntimeProfile(input: IngestionInput): OcrRuntimeProfile {
+  const adv = input.advancedOptions ?? {};
+  const rawProfile = adv.ocrRepairProfile ?? process.env.OCR_MODEL_PROFILE ?? "quality";
+  const profile: OcrModelProfile = rawProfile === "dev" ? "dev" : "quality";
+  const dpiPrimary = Number(
+    process.env.OCR_RASTER_DPI_PRIMARY ?? (profile === "dev" ? 100 : 150)
+  );
+  const dpiFallback = Number(
+    process.env.OCR_RASTER_DPI_FALLBACK ?? (profile === "dev" ? 150 : 220)
+  );
+  const envMaxPages = process.env.OCR_REPAIR_MAX_PAGES
+    ? Number(process.env.OCR_REPAIR_MAX_PAGES)
+    : undefined;
+  const hasAdvancedMaxPages = typeof adv.maxOcrPages === "number";
+  const advancedMaxPages = hasAdvancedMaxPages ? Math.max(0, adv.maxOcrPages ?? 0) : undefined;
+  const maxPages = hasAdvancedMaxPages
+    ? advancedMaxPages === 0
+      ? undefined
+      : advancedMaxPages
+    : envMaxPages !== undefined
+      ? envMaxPages <= 0
+        ? undefined
+        : envMaxPages
+      : profile === "dev"
+        ? 2
+        : undefined;
+
+  return { profile, dpiPrimary, dpiFallback, maxPages };
+}
 
 function normalizeUserHint(input: IngestionInput): PdfParseHint {
   const opts = input.advancedOptions ?? {};
@@ -29,7 +66,8 @@ function normalizeUserHint(input: IngestionInput): PdfParseHint {
 
 async function applyOcrRepairLayer(
   input: IngestionInput,
-  preflight: import("./preflight/pdfjsPreflight.js").PreflightResult,
+  preflight: PreflightResult,
+  pageStats: PageTextStats[],
   odlBlocks: SourceBlock[],
   mergedOdlItems: import("./types.js").OdlJsonItem[],
   warnings: string[]
@@ -39,27 +77,35 @@ async function applyOcrRepairLayer(
     return odlBlocks;
   }
 
-  const pageStatsByNum = new Map(preflight.pages.map((s) => [s.pageNum, s]));
+  const pageStatsByNum = new Map(pageStats.map((s) => [s.pageNum, s]));
   const repairPages = computeOcrRepairPages(pageStatsByNum, mergedOdlItems, {
     enabled: true,
     repairOnScanOrLowText: adv.repairOnScanOrLowText === true,
     repairOnStructuralHole: adv.repairOnStructuralHole === true,
+    repairOnTableLayout: adv.enableComplexTableParsing === true || adv.enableOcrRepair === true,
   });
 
   if (repairPages.size === 0) {
     return odlBlocks;
   }
 
-  const models = resolveOcrModelsFromEnv();
+  const runtime = resolveOcrRuntimeProfile(input);
+  const models = resolveOcrModelsFromEnv(runtime.profile);
   if (!models) {
     warnings.push(
-      "已啟用 OCR repair，但未設定 ESEARCH_OCR_MODEL_DIR 或缺少檔案（det/rec/dict）。略過 eSearch-OCR。"
+      `已啟用 OCR repair，但找不到 ${runtime.profile} profile 的模型或缺少檔案（det/rec/dict）。略過 eSearch-OCR。`
     );
     return odlBlocks;
   }
 
   const ocrDir = join(TMP_DIR, `ocr-${input.documentId}`);
   mkdirSync(ocrDir, { recursive: true });
+
+  if (runtime.maxPages && repairPages.size > runtime.maxPages) {
+    warnings.push(
+      `OCR repair 使用 ${runtime.profile} profile，僅處理前 ${runtime.maxPages} / ${repairPages.size} 個觸發頁面。`
+    );
+  }
 
   const concurrency =
     input.ocrRepairConcurrency ??
@@ -74,6 +120,9 @@ async function applyOcrRepairLayer(
       models,
       workDir: ocrDir,
       concurrency,
+      dpiPrimary: runtime.dpiPrimary,
+      dpiFallback: runtime.dpiFallback,
+      maxPages: runtime.maxPages,
     });
     warnings.push(...rw);
     return mergeOdlBlocksWithOcrRepair(odlBlocks, repairBlocks);
@@ -90,9 +139,7 @@ async function applyOcrRepairLayer(
 
 export async function ingestPdf(input: IngestionInput): Promise<ReviewPayload> {
   const hint = normalizeUserHint(input);
-  const parserBackend = input.parserBackend ?? "auto";
-
-  const preflight = await pdfjsPreflight(input.filePath);
+  const preflight = await popplerPreflight(input.filePath);
 
   const odlOutputDir = join(TMP_DIR, `odl-${input.documentId}`);
   mkdirSync(odlOutputDir, { recursive: true });
@@ -109,47 +156,26 @@ export async function ingestPdf(input: IngestionInput): Promise<ReviewPayload> {
   };
 
   try {
-    if (parserBackend === "opendataloader") {
-      const { blocks, mergedOdlItems, warnings } = await runOpendataloaderAdapter(
-        input.filePath,
-        preflight.pageInfos,
-        input.documentId,
-        odlOutputDir
-      );
-      parserWarnings = warnings;
-      let merged = blocks;
-      merged = await applyOcrRepairLayer(
-        input,
-        preflight,
-        merged,
-        mergedOdlItems,
-        parserWarnings
-      );
-      dedupedBlocks = dedupeBlocks(merged, { bboxOverlapThreshold: 0.85 });
-    } else if (parserBackend === "pdfjs-extract") {
-      const allPages = preflight.rawPages.map((p) => p.pageInfo.num);
-      const blocks = runPdfjsAdapter(preflight.rawPages, allPages, input.documentId);
-      dedupedBlocks = dedupeBlocks(blocks, { bboxOverlapThreshold: 0.85 });
-    } else {
-      const { blocks, mergedOdlItems, warnings } = await runOpendataloaderAdapter(
-        input.filePath,
-        preflight.pageInfos,
-        input.documentId,
-        odlOutputDir
-      );
-      parserWarnings = warnings;
-      let merged = blocks;
-      merged = await applyOcrRepairLayer(
-        input,
-        preflight,
-        merged,
-        mergedOdlItems,
-        parserWarnings
-      );
-      dedupedBlocks = dedupeBlocks(merged, { bboxOverlapThreshold: 0.85 });
-    }
+    const { blocks, mergedOdlItems, warnings } = await runOpendataloaderAdapter(
+      input.filePath,
+      preflight.pageInfos,
+      input.documentId,
+      odlOutputDir
+    );
+    parserWarnings = warnings;
+    const pageStats = buildOdlPageStats(preflight.pageInfos, mergedOdlItems);
+    let merged = blocks;
+    merged = await applyOcrRepairLayer(
+      input,
+      preflight,
+      pageStats,
+      merged,
+      mergedOdlItems,
+      parserWarnings
+    );
+    dedupedBlocks = dedupeBlocks(merged, { bboxOverlapThreshold: 0.85 });
 
-    const detections = preflight.pages.map((stats) => classifyPage(stats, hint));
+    const detections = pageStats.map((stats) => classifyPage(stats, hint));
     const qualityReport = evaluateExtractionQuality(dedupedBlocks, detections);
 
     return buildReviewPayload(

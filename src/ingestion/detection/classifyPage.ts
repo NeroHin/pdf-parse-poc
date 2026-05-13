@@ -65,8 +65,8 @@ function buildRecommendation(
       };
     default:
       return {
-        parserRecommendation: "pdfjs",
-        reasons: ["clean native text layer detected"],
+        parserRecommendation: "opendataloader_default",
+        reasons: ["ODL-only parser path"],
       };
   }
 }
